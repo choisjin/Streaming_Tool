@@ -48,6 +48,8 @@ Thumbs.db
 **/build/
 **/*.hex
 **/*.elf
+# Arduino IDE 2.x scatters this in the sketch folder
+firmware/**/debug.log
 
 # IDE
 .idea/
