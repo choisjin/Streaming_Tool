@@ -22,11 +22,15 @@ micro.build.usb_manufacturer="HID"
 leonardo.build.usb_product="HID Keyboard"
 leonardo.build.usb_manufacturer="HID"
 
-# VID stays 0x2341 (Arduino) so existing drivers still bind. If you want to
-# look like a generic device, change to 0x046D (Logitech) or 0x045E (Microsoft)
-# — but read your country's regulations first; spoofing a registered VID is
-# not legal in some jurisdictions for a shipped product.
-# micro.build.vid=0x2341
-# micro.build.pid=0x8037
-# leonardo.build.vid=0x2341
-# leonardo.build.pid=0x8036
+# PID change is what actually moves the OS off "Arduino Micro" — Arduino's
+# driver INF matches by VID/PID and overrides whatever USB iProduct we put on
+# the wire. Pick a PID that's outside Arduino's published range so the INF
+# doesn't claim it; the device then shows up as a plain composite device with
+# our chosen iProduct ("HID Keyboard"). VID stays 0x2341 so we're not spoofing
+# another vendor.
+#
+# Note: the bootloader uses a different PID (0x0037 for Micro, 0x0036 for
+# Leonardo). Don't change those — the IDE uses the bootloader PID to find the
+# board during upload. Only the sketch-mode PID needs to move.
+micro.build.pid=0xC0FE
+leonardo.build.pid=0xC0FF
