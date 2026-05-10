@@ -38,9 +38,13 @@ public sealed class WebRtcPeer : IDisposable
             iceServers = new List<RTCIceServer>(iceServers ?? Array.Empty<RTCIceServer>()),
         });
 
-        // Offer H.264 only — broadly supported by mobile browsers and easy for hardware encoders.
-        var h264 = new SDPAudioVideoMediaFormat(SDPMediaTypesEnum.video, 96, "H264", 90000,
-            "packetization-mode=1;profile-level-id=42e01f");
+        // Offer H.264 only — broadly supported by mobile browsers and friendly to hardware encoders.
+        // Use the (kind, id, rtpmap, fmtp) constructor; "rtpmap" carries codec name + clock rate.
+        var h264 = new SDPAudioVideoMediaFormat(
+            SDPMediaTypesEnum.video,
+            id: 96,
+            rtpmap: "H264/90000",
+            fmtp: "packetization-mode=1;profile-level-id=42e01f");
 
         _videoTrack = new MediaStreamTrack(SDPMediaTypesEnum.video,
             isRemote: false,

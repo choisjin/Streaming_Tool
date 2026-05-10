@@ -1,15 +1,24 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
+using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
+using static Vortice.Direct3D11.D3D11;
+using static Vortice.DXGI.DXGI;
+
+// MapFlags and ResultCode exist in both Direct3D11 and DXGI namespaces. Disambiguate.
+using D3D11MapFlags = Vortice.Direct3D11.MapFlags;
+using DXGIResultCode = Vortice.DXGI.ResultCode;
 
 namespace StreamingHost.Capture;
 
 /// <summary>
-/// Full-screen capture via DXGI Desktop Duplication (all monitors -> primary monitor only for now).
-/// Suitable for non-protected content. For per-window capture see WindowCapture.
+/// Full-screen capture via DXGI Desktop Duplication. Pulls frames from the
+/// chosen monitor (default = primary) into a CPU-readable staging texture and
+/// hands the BGRA span to subscribers. Reinitializes on
+/// <c>DXGI_ERROR_ACCESS_LOST</c> (resolution change, fullscreen flip, etc.).
 /// </summary>
 public sealed class DesktopCapture : IFrameSource
 {
@@ -26,10 +35,7 @@ public sealed class DesktopCapture : IFrameSource
     public int Height { get; private set; }
     public event FrameAvailableHandler? FrameAvailable;
 
-    public DesktopCapture(int monitorIndex = 0)
-    {
-        _monitorIndex = monitorIndex;
-    }
+    public DesktopCapture(int monitorIndex = 0) => _monitorIndex = monitorIndex;
 
     public void Start()
     {
@@ -48,44 +54,43 @@ public sealed class DesktopCapture : IFrameSource
 
     private void Initialize()
     {
-        // Pick primary adapter, monitor by index
-        using var factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
-        using var adapter = factory.GetAdapter1(0);
+        using var factory = CreateDXGIFactory1<IDXGIFactory1>();
 
-        // Create D3D11 device
-        D3D11.D3D11CreateDevice(
-            adapter,
+        // Adapter 0 (primary GPU)
+        if (factory.EnumAdapters1(0, out IDXGIAdapter1? adapter).Failure || adapter is null)
+            throw new InvalidOperationException("No DXGI adapter (0) available.");
+        using var _adapter = adapter;
+
+        // Create D3D11 device. The Vortice overload returns 3 out params (device, featureLevel, context).
+        var hr = D3D11CreateDevice(
+            _adapter,
             DriverType.Unknown,
             DeviceCreationFlags.BgraSupport,
             new[] { FeatureLevel.Level_11_0 },
-            out _device).CheckError();
+            out ID3D11Device tempDevice,
+            out _,
+            out ID3D11DeviceContext tempContext);
+        hr.CheckError();
+        _device = tempDevice;
+        _context = tempContext;
 
-        _context = _device!.ImmediateContext;
+        // Locate the output (monitor) at the requested index.
+        if (_adapter.EnumOutputs((uint)_monitorIndex, out IDXGIOutput? output).Failure || output is null)
+            throw new InvalidOperationException($"Monitor {_monitorIndex} not found on adapter 0.");
+        using var _output = output;
+        using var output1 = _output.QueryInterface<IDXGIOutput1>();
 
-        // Locate output (monitor)
-        var outputCount = 0;
-        IDXGIOutput? selectedOutput = null;
-        for (var i = 0; ; i++)
-        {
-            if (adapter.EnumOutputs(i, out var o).Failure) break;
-            if (i == _monitorIndex) selectedOutput = o;
-            else o.Dispose();
-            outputCount++;
-        }
-        if (selectedOutput is null) throw new InvalidOperationException($"Monitor {_monitorIndex} not found (count={outputCount}).");
-
-        using var output1 = selectedOutput.QueryInterface<IDXGIOutput1>();
-        var desc = selectedOutput.Description;
+        var desc = _output.Description;
         Width = desc.DesktopCoordinates.Right - desc.DesktopCoordinates.Left;
         Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top;
 
         _duplication = output1.DuplicateOutput(_device);
 
-        // Staging texture for CPU read-back
+        // CPU-readable staging texture matching capture format.
         _staging = _device.CreateTexture2D(new Texture2DDescription
         {
-            Width = Width,
-            Height = Height,
+            Width = (uint)Width,
+            Height = (uint)Height,
             MipLevels = 1,
             ArraySize = 1,
             Format = Format.B8G8R8A8_UNorm,
@@ -93,10 +98,8 @@ public sealed class DesktopCapture : IFrameSource
             Usage = ResourceUsage.Staging,
             BindFlags = BindFlags.None,
             CPUAccessFlags = CpuAccessFlags.Read,
-            MiscFlags = ResourceOptionFlags.None
+            MiscFlags = ResourceOptionFlags.None,
         });
-
-        selectedOutput.Dispose();
     }
 
     private void Loop()
@@ -105,41 +108,44 @@ public sealed class DesktopCapture : IFrameSource
 
         while (_running)
         {
-            var hr = _duplication.AcquireNextFrame(50, out var frameInfo, out var resource);
-            if (hr.Failure)
-            {
-                if (hr == ResultCode.WaitTimeout) continue;
-                // Lost duplication (resolution change, mode switch). Reinit.
-                ReinitializeQuiet();
-                continue;
-            }
-
+            Result hr;
             try
             {
-                using var sourceTex = resource.QueryInterface<ID3D11Texture2D>();
+                hr = _duplication.AcquireNextFrame(50, out var _, out IDXGIResource? resource);
+                if (hr.Failure)
+                {
+                    if (hr.Code == DXGIResultCode.WaitTimeout.Code) continue;
+                    ReinitializeQuiet();
+                    continue;
+                }
+                using var _resource = resource;
+                if (_resource is null) { _duplication.ReleaseFrame(); continue; }
+
+                using var sourceTex = _resource.QueryInterface<ID3D11Texture2D>();
                 _context.CopyResource(_staging, sourceTex);
 
-                var map = _context.Map(_staging, 0, MapMode.Read, MapFlags.None);
+                var map = _context.Map(_staging, 0, MapMode.Read, D3D11MapFlags.None);
                 try
                 {
-                    var stride = map.RowPitch;
+                    var stride = (int)map.RowPitch;
                     unsafe
                     {
                         var ptr = (byte*)map.DataPointer;
                         var span = new ReadOnlySpan<byte>(ptr, stride * Height);
-                        var fr = new FrameRef(span, Width, Height, stride, _clock.ElapsedTicks * (10_000_000 / Stopwatch.Frequency));
+                        var fr = new FrameRef(span, Width, Height, stride,
+                            _clock.ElapsedTicks * (10_000_000L / Stopwatch.Frequency));
                         FrameAvailable?.Invoke(fr);
                     }
                 }
                 finally
                 {
                     _context.Unmap(_staging, 0);
+                    _duplication.ReleaseFrame();
                 }
             }
-            finally
+            catch
             {
-                resource.Dispose();
-                _duplication.ReleaseFrame();
+                ReinitializeQuiet();
             }
         }
     }
@@ -148,13 +154,16 @@ public sealed class DesktopCapture : IFrameSource
     {
         try
         {
-            _duplication?.Dispose();
-            _duplication = null;
-            _staging?.Dispose();
-            _staging = null;
+            _duplication?.Dispose(); _duplication = null;
+            _staging?.Dispose();     _staging = null;
+            _context?.Dispose();     _context = null;
+            _device?.Dispose();      _device = null;
             Initialize();
         }
-        catch { /* swallow; loop will retry */ Thread.Sleep(200); }
+        catch
+        {
+            Thread.Sleep(200);
+        }
     }
 
     public void Dispose()

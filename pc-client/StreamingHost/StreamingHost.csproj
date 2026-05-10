@@ -2,7 +2,10 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- Plain net8.0-windows is enough for Phase 1+2 (DXGI + WPF only). Per-window
+         capture in Phase 3 will require net8.0-windows10.0.19041.0 + Windows SDK
+         and Microsoft.Windows.CsWinRT. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,26 +13,16 @@
     <AssemblyName>StreamingHost</AssemblyName>
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Web SDK defaults to launching IIS Express on debug; we don't want that -->
     <UseAppHost>true</UseAppHost>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- WebRTC (pure .NET) -->
-    <PackageReference Include="SIPSorcery" Version="6.2.4" />
-    <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="6.2.0" />
-    <!-- Per-window capture via Windows.Graphics.Capture -->
-    <PackageReference Include="Microsoft.Windows.CsWinRT" Version="2.1.5" />
+    <PackageReference Include="SIPSorcery" Version="8.0.23" />
+    <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="8.0.7" />
     <!-- Direct3D 11 / DXGI -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Windows Runtime APIs (Windows.Graphics.Capture) -->
-    <CsWinRTIncludes Include="Windows.Graphics.Capture" />
-    <CsWinRTIncludes Include="Windows.Graphics.DirectX" />
-    <CsWinRTIncludes Include="Windows.Graphics.DirectX.Direct3D11" />
   </ItemGroup>
 
 </Project>
