@@ -42,7 +42,7 @@ PC가 외부에서 접근 가능해야 합니다. 가장 단순한 경로:
 
 - [x] **Phase 0**: 모바일 웹앱 UI (Toolbar, VirtualJoystick, VirtualMousePad, StreamViewer)
 - [x] **Phase 1**: PC 클라이언트 임베디드 시그널링 서버 + 모바일 join/round-trip 검증
-- [ ] **Phase 2**: 캡처(전체 화면) + 인코더(NVENC) + WebRTC peer 결선
+- [x] **Phase 2**: 캡처(전체 화면) + 인코더(FFmpeg/NVENC) + WebRTC peer 결선 + 모바일 viewer UI
 - [ ] **Phase 3**: 프로세스/창 리스트 + 창 단위 캡처 (Windows.Graphics.Capture)
 - [ ] **Phase 4**: Pro Micro 펌웨어 + 시리얼 프로토콜 + DataChannel 입력
 - [ ] **Phase 5**: 자동 재연결, TURN, 트레이 아이콘, DDNS 옵션, TLS 옵션

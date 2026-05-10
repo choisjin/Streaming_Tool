@@ -6,13 +6,17 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Windows;
+using StreamingHost.Capture;
 using StreamingHost.Signaling;
+using StreamingHost.Streaming;
 
 namespace StreamingHost;
 
 public partial class MainWindow : Window
 {
     private EmbeddedSignalingServer? _server;
+    private StreamingPipeline? _pipeline;
+    private DesktopCapture? _capture;
     private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(4) };
 
     public MainWindow()
@@ -38,7 +42,7 @@ public partial class MainWindow : Window
 
     private void RegenButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_server is not null) return; // disallow while running so existing viewers don't break
+        if (_server is not null) return;
         RoomCodeBox.Text = GenerateCode();
     }
 
@@ -57,9 +61,19 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = false;
         try
         {
+            // 1) Start desktop capture (full primary monitor for now; per-window in Phase 3)
+            _capture = new DesktopCapture(monitorIndex: 0);
+            _capture.Start();
+            Log($"capture started: {_capture.Width}x{_capture.Height}");
+
+            // 2) Build pipeline (encoder is created with capture's resolution)
+            _pipeline = new StreamingPipeline(_capture, fps: 60);
+            _pipeline.Start();
+
+            // 3) Embedded signaling server
             _server = new EmbeddedSignalingServer(room, port);
             _server.ViewerJoined += OnViewerJoined;
-            _server.ViewerLeft += vid => Log($"viewer left: {vid}");
+            _server.ViewerLeft += OnViewerLeft;
             _server.ServerError += err => Log($"server error: {err}");
             await _server.StartAsync();
 
@@ -81,6 +95,7 @@ public partial class MainWindow : Window
             StatusText.Text = $"Failed: {ex.Message}";
             StatusText.Foreground = System.Windows.Media.Brushes.OrangeRed;
             Log($"start failed: {ex.Message}");
+            await TeardownAsync();
             StartButton.IsEnabled = true;
         }
     }
@@ -88,11 +103,7 @@ public partial class MainWindow : Window
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
         StopButton.IsEnabled = false;
-        if (_server is not null)
-        {
-            await _server.DisposeAsync();
-            _server = null;
-        }
+        await TeardownAsync();
         LanUrlBox.Text = "";
         WanUrlBox.Text = "";
         StatusText.Text = "Idle";
@@ -102,6 +113,13 @@ public partial class MainWindow : Window
         PortBox.IsEnabled = true;
         RoomCodeBox.IsEnabled = true;
         Log("stopped");
+    }
+
+    private async Task TeardownAsync()
+    {
+        if (_server is not null) { await _server.DisposeAsync(); _server = null; }
+        _pipeline?.Dispose(); _pipeline = null;
+        _capture?.Dispose(); _capture = null;
     }
 
     private void CopyLan_Click(object sender, RoutedEventArgs e)
@@ -114,19 +132,33 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(WanUrlBox.Text)) Clipboard.SetText(WanUrlBox.Text);
     }
 
-    private void OnViewerJoined(ViewerSession session)
+    private async void OnViewerJoined(ViewerSession session)
     {
         Log($"viewer joined: {session.ViewerId}");
-        // Phase 2 will hook the WebRTC peer here.
-        // For Phase 1 we just log the relayed messages so the round-trip can be verified.
-        session.Message += (type, _) => Log($"viewer {session.ViewerId}: {type}");
+        try
+        {
+            var peer = new WebRtcPeer(session);
+            peer.ConnectionStateChanged += s => Log($"viewer {session.ViewerId} state={s}");
+            peer.InputMessageReceived += text => Log($"input[{session.ViewerId}]: {text}");
+            _pipeline?.AddPeer(peer);
+            await peer.StartOfferAsync();
+        }
+        catch (Exception ex)
+        {
+            Log($"peer for {session.ViewerId} failed: {ex.Message}");
+        }
+    }
+
+    private void OnViewerLeft(string viewerId)
+    {
+        Log($"viewer left: {viewerId}");
+        _pipeline?.RemovePeer(viewerId);
     }
 
     private static string GetLanIPv4()
     {
         try
         {
-            // Pick the IPv4 address on the active up interface that has a default gateway
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces()
                 .Where(n => n.OperationalStatus == OperationalStatus.Up &&
                             n.NetworkInterfaceType != NetworkInterfaceType.Loopback))
