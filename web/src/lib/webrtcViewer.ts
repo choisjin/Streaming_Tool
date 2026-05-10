@@ -157,6 +157,12 @@ export class WebRtcViewer {
 
     pc.ontrack = (e) => {
       this._stream = e.streams[0] ?? new MediaStream([e.track]);
+      // Tell the browser we want minimum playout latency. Without this hint
+      // Chrome buffers ~80-150 ms to absorb network jitter, which is fine for
+      // a video call but is exactly the lag we're trying to remove for remote
+      // play. 0 means "render the frame as soon as it's decodable".
+      const recv = e.receiver as RTCRtpReceiver & { playoutDelayHint?: number };
+      try { recv.playoutDelayHint = 0; } catch { /* not supported on this browser */ }
       this.streamCallbacks.forEach((cb) => cb(this._stream));
     };
 

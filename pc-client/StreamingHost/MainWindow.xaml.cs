@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Windows;
 using StreamingHost.Capture;
+using StreamingHost.Input;
 using StreamingHost.Signaling;
 using StreamingHost.Streaming;
 
@@ -17,13 +18,29 @@ public partial class MainWindow : Window
     private EmbeddedSignalingServer? _server;
     private StreamingPipeline? _pipeline;
     private WindowsGraphicsCapture? _capture;
+    private SerialBridge? _serial;
+    private InputRouter? _router;
+    private System.Threading.Timer? _statsTimer;
     private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(4) };
 
     public MainWindow()
     {
         InitializeComponent();
         RoomCodeBox.Text = GenerateCode();
+        RefreshComPorts();
     }
+
+    private void RefreshComPorts()
+    {
+        var prev = ComPortBox.SelectedItem as string;
+        ComPortBox.Items.Clear();
+        ComPortBox.Items.Add("(none)");
+        foreach (var p in SerialBridge.EnumeratePorts()) ComPortBox.Items.Add(p);
+        ComPortBox.SelectedItem = prev ?? "COM3"; // default: user mentioned COM3
+        if (ComPortBox.SelectedIndex < 0) ComPortBox.SelectedIndex = 0;
+    }
+
+    private void ComRefreshButton_Click(object sender, RoutedEventArgs e) => RefreshComPorts();
 
     private static string GenerateCode()
     {
@@ -61,6 +78,29 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = false;
         try
         {
+            // 0) Optional: open the serial link to the Pro Micro for HID input.
+            var comPort = ComPortBox.SelectedItem as string;
+            if (!string.IsNullOrEmpty(comPort) && comPort != "(none)")
+            {
+                Log($"[0/3] opening HID serial on {comPort}…");
+                try
+                {
+                    _serial = new SerialBridge(comPort);
+                    _serial.Diagnostic += d => Log($"hid: {d}");
+                    _serial.LineReceived += l => Log($"hid<- {l}");
+                    _serial.Open();
+                }
+                catch (Exception ex)
+                {
+                    Log($"hid open failed ({ex.GetType().Name}): {ex.Message} — continuing without input");
+                    _serial = null;
+                }
+            }
+            else
+            {
+                Log("[0/3] HID serial disabled (no COM port selected)");
+            }
+
             // 1) Start desktop capture via Windows.Graphics.Capture (works on hybrid GPUs/RDP)
             Log("[1/3] starting capture (Windows.Graphics.Capture)…");
             if (!WindowsGraphicsCapture.IsAvailable())
@@ -69,11 +109,24 @@ public partial class MainWindow : Window
             _capture.Start();
             Log($"capture started: {_capture.Width}x{_capture.Height} on \"{_capture.PickedSourceDescription}\"");
 
+            // Now that we know the screen resolution, set up the input router.
+            // It only fires anything if we have an open serial link.
+            if (_serial is not null)
+                _router = new InputRouter(_serial, _capture.Width, _capture.Height);
+
             // 2) Build pipeline (encoder is created with capture's resolution)
             Log("[2/3] starting pipeline + encoder…");
             _pipeline = new StreamingPipeline(_capture, fps: 60);
+            _pipeline.Diagnostic += d => Log($"diag: {d}");
             _pipeline.Start();
             Log("pipeline ready");
+
+            // Heartbeat: every 2s log how many frames the OS handed to us.
+            _statsTimer = new System.Threading.Timer(_ =>
+            {
+                if (_capture is null) return;
+                Log($"stats: WGC frames arrived={_capture.FrameArrivedCount}");
+            }, null, 2000, 2000);
 
             // 3) Embedded signaling server
             Log("[3/3] starting signaling server…");
@@ -81,6 +134,7 @@ public partial class MainWindow : Window
             _server.ViewerJoined += OnViewerJoined;
             _server.ViewerLeft += OnViewerLeft;
             _server.ServerError += err => Log($"server error: {err}");
+            _server.Diagnostic += d => Log($"diag: {d}");
             await _server.StartAsync();
 
             var lan = GetLanIPv4();
@@ -92,6 +146,8 @@ public partial class MainWindow : Window
             RegenButton.IsEnabled = false;
             PortBox.IsEnabled = false;
             RoomCodeBox.IsEnabled = false;
+            ComPortBox.IsEnabled = false;
+            ComRefreshButton.IsEnabled = false;
             StatusText.Text = $"Listening on :{port}  room={room}";
             StatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
             Log($"signaling listening on :{port}  room={room}  lan={lan}");
@@ -126,14 +182,24 @@ public partial class MainWindow : Window
         RegenButton.IsEnabled = true;
         PortBox.IsEnabled = true;
         RoomCodeBox.IsEnabled = true;
+        ComPortBox.IsEnabled = true;
+        ComRefreshButton.IsEnabled = true;
         Log("stopped");
     }
 
     private async Task TeardownAsync()
     {
+        _statsTimer?.Dispose(); _statsTimer = null;
         if (_server is not null) { await _server.DisposeAsync(); _server = null; }
         _pipeline?.Dispose(); _pipeline = null;
         _capture?.Dispose(); _capture = null;
+        // Drop input last so the very last release-all has time to flush.
+        if (_serial is not null)
+        {
+            try { _serial.SendLine("RESET"); } catch { }
+            _serial.Dispose(); _serial = null;
+        }
+        _router = null;
     }
 
     private void CopyLan_Click(object sender, RoutedEventArgs e)
@@ -153,7 +219,11 @@ public partial class MainWindow : Window
         {
             var peer = new WebRtcPeer(session);
             peer.ConnectionStateChanged += s => Log($"viewer {session.ViewerId} state={s}");
-            peer.InputMessageReceived += text => Log($"input[{session.ViewerId}]: {text}");
+            peer.InputMessageReceived += text =>
+            {
+                // Forward to HID. Don't echo every keystroke to the UI log — too chatty.
+                _router?.Handle(text);
+            };
             _pipeline?.AddPeer(peer);
             await peer.StartOfferAsync();
         }

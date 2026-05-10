@@ -20,14 +20,17 @@ public delegate void FrameAvailableHandler(FrameRef frame);
 public readonly ref struct FrameRef
 {
     public readonly ReadOnlySpan<byte> Bgra;
+    /// <summary>Native pointer to the same BGRA buffer; valid only during the callback.</summary>
+    public readonly IntPtr BgraPtr;
     public readonly int Width;
     public readonly int Height;
     public readonly int Stride;
     public readonly long TimestampHns; // 100ns ticks since process start
 
-    public FrameRef(ReadOnlySpan<byte> bgra, int width, int height, int stride, long timestampHns)
+    public FrameRef(ReadOnlySpan<byte> bgra, IntPtr bgraPtr, int width, int height, int stride, long timestampHns)
     {
         Bgra = bgra;
+        BgraPtr = bgraPtr;
         Width = width;
         Height = height;
         Stride = stride;

@@ -34,6 +34,8 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
     public event Action<ViewerSession>? ViewerJoined;
     public event Action<string>? ViewerLeft;     // viewerId
     public event Action<string>? ServerError;
+    /// <summary>Diagnostic: every raw line of activity (connection, message, send, close).</summary>
+    public event Action<string>? Diagnostic;
 
     public EmbeddedSignalingServer(string roomCode, int port = 8080)
     {
@@ -51,10 +53,14 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; });
         // Configure Kestrel via Services.Configure — the WebHost.* extension
-        // methods are only present when targeting the Web SDK.
+        // methods are only present when targeting the Web SDK. Bind both IPv4
+        // and IPv6 explicitly: ListenAnyIP creates a dual-stack v6 socket that
+        // sometimes refuses v4-mapped accepts on Windows (observed: phones on
+        // 192.168.x can't reach the host even though localhost works).
         builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(opts =>
         {
-            opts.ListenAnyIP(Port);
+            opts.Listen(System.Net.IPAddress.Any, Port);
+            opts.Listen(System.Net.IPAddress.IPv6Any, Port);
         });
 
         _app = builder.Build();
@@ -92,6 +98,7 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
         ViewerSession? session = null;
         var buffer = new byte[64 * 1024];
 
+        Diagnostic?.Invoke("ws connected");
         try
         {
             while (ws.State == WebSocketState.Open)
@@ -101,26 +108,42 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
                 do
                 {
                     result = await ws.ReceiveAsync(buffer, CancellationToken.None);
-                    if (result.MessageType == WebSocketMessageType.Close) return;
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Diagnostic?.Invoke($"ws close frame from peer ({result.CloseStatus} {result.CloseStatusDescription})");
+                        return;
+                    }
                     ms.Write(buffer, 0, result.Count);
                 } while (!result.EndOfMessage);
 
                 var text = Encoding.UTF8.GetString(ms.ToArray());
-                var msg = JsonNode.Parse(text);
-                if (msg is null) continue;
+                var snippet = text.Length > 200 ? text[..200] + "…" : text;
+                Diagnostic?.Invoke($"ws recv: {snippet}");
+
+                JsonNode? msg;
+                try { msg = JsonNode.Parse(text); }
+                catch (Exception ex)
+                {
+                    Diagnostic?.Invoke($"json parse failed: {ex.Message}");
+                    continue;
+                }
+                if (msg is null) { Diagnostic?.Invoke("json parsed to null"); continue; }
 
                 var type = msg["type"]?.GetValue<string>();
+                Diagnostic?.Invoke($"msg type=\"{type}\"");
 
                 if (type == "join")
                 {
                     var room = msg["room"]?.GetValue<string>();
                     if (room != RoomCode)
                     {
+                        Diagnostic?.Invoke($"join with wrong room \"{room}\" (expected \"{RoomCode}\") — refusing");
                         await SendAsync(ws, new { type = "error", code = "bad-room" });
                         continue;
                     }
                     session = new ViewerSession(ws, this);
                     _viewers[session.ViewerId] = session;
+                    Diagnostic?.Invoke($"sending joined for {session.ViewerId}");
                     await SendAsync(ws, new { type = "joined", viewerId = session.ViewerId, hostReady = true });
                     ViewerJoined?.Invoke(session);
                     continue;
@@ -128,6 +151,7 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
 
                 if (session is null)
                 {
+                    Diagnostic?.Invoke($"msg type=\"{type}\" before join — refusing");
                     await SendAsync(ws, new { type = "error", code = "not-joined" });
                     continue;
                 }
@@ -139,9 +163,11 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
         catch (Exception ex)
         {
             ServerError?.Invoke(ex.Message);
+            Diagnostic?.Invoke($"loop exception: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
+            Diagnostic?.Invoke($"ws closed (state={ws.State})");
             if (session is not null)
             {
                 _viewers.TryRemove(session.ViewerId, out _);

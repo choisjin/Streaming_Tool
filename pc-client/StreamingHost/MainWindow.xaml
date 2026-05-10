@@ -18,11 +18,16 @@
         <!-- Listen settings -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="Listen port:" Width="90" VerticalAlignment="Center"/>
-            <TextBox x:Name="PortBox" Width="80" Text="8080"/>
-            <TextBlock Text="Room code:" Width="90" Margin="20,0,0,0" VerticalAlignment="Center"/>
-            <TextBox x:Name="RoomCodeBox" Width="100"/>
-            <Button x:Name="RegenButton" Content="↻" Width="28" Margin="4,0,0,0" Click="RegenButton_Click"
+            <TextBox x:Name="PortBox" Width="60" Text="8080"/>
+            <TextBlock Text="Room:" Width="48" Margin="14,0,0,0" VerticalAlignment="Center"/>
+            <TextBox x:Name="RoomCodeBox" Width="86"/>
+            <Button x:Name="RegenButton" Content="↻" Width="26" Margin="4,0,0,0" Click="RegenButton_Click"
                     ToolTip="Regenerate room code"/>
+            <TextBlock Text="HID port:" Width="62" Margin="14,0,0,0" VerticalAlignment="Center"/>
+            <ComboBox x:Name="ComPortBox" Width="90"
+                      ToolTip="Pro Micro COM port. Leave unselected to disable HID input."/>
+            <Button x:Name="ComRefreshButton" Content="↻" Width="26" Margin="4,0,0,0"
+                    Click="ComRefreshButton_Click" ToolTip="Rescan COM ports"/>
         </StackPanel>
 
         <!-- Connect URLs (read-only, populated when running) -->
@@ -54,6 +59,6 @@
         </DockPanel>
 
         <TextBlock Grid.Row="5" Foreground="#777" Margin="0,8,0,0" TextWrapping="Wrap"
-                   Text="Phase 1 — embedded signaling only. Forward the listen port on your router so the WAN URL is reachable from cellular. Capture + encoder + WebRTC peer wire up next."/>
+                   Text="Pick the Pro Micro COM port (leave empty to disable HID). Forward the listen port on your router for cellular access."/>
     </Grid>
 </Window>

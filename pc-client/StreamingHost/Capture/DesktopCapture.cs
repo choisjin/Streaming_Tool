@@ -192,7 +192,7 @@ public sealed class DesktopCapture : IFrameSource
                     {
                         var ptr = (byte*)map.DataPointer;
                         var span = new ReadOnlySpan<byte>(ptr, stride * Height);
-                        var fr = new FrameRef(span, Width, Height, stride,
+                        var fr = new FrameRef(span, map.DataPointer, Width, Height, stride,
                             _clock.ElapsedTicks * (10_000_000L / Stopwatch.Frequency));
                         FrameAvailable?.Invoke(fr);
                     }

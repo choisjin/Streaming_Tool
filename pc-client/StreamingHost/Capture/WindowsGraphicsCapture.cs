@@ -30,10 +30,13 @@ public sealed class WindowsGraphicsCapture : IFrameSource
     private GraphicsCaptureItem? _item;
     private Direct3D11CaptureFramePool? _pool;
     private GraphicsCaptureSession? _session;
+    private System.Threading.Thread? _captureThread;
 
     private readonly Stopwatch _clock = new();
     private volatile bool _running;
     private int _stagingWidth, _stagingHeight; // tracks current staging size for dynamic resolution
+    private long _frameArrivedCount;
+    public long FrameArrivedCount => System.Threading.Interlocked.Read(ref _frameArrivedCount);
 
     public int Width { get; private set; }
     public int Height { get; private set; }
@@ -47,6 +50,39 @@ public sealed class WindowsGraphicsCapture : IFrameSource
         if (!IsAvailable())
             throw new InvalidOperationException("Windows.Graphics.Capture is not supported on this system.");
 
+        // WGC's FrameArrived event marshals on the apartment that called
+        // StartCapture(); from the WPF STA the dispatch can stall (no message
+        // pump for COM RPC). Run the whole capture pipeline on a dedicated
+        // background MTA thread so frame events flow.
+        var ready = new System.Threading.ManualResetEventSlim();
+        Exception? startupError = null;
+        _captureThread = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                StartOnCaptureThread();
+                ready.Set();
+                // Keep thread alive while running so MTA stays valid for the pool/session.
+                while (_running) System.Threading.Thread.Sleep(100);
+            }
+            catch (Exception ex)
+            {
+                startupError = ex;
+                ready.Set();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "WGC capture",
+        };
+        _captureThread.SetApartmentState(System.Threading.ApartmentState.MTA);
+        _captureThread.Start();
+        ready.Wait();
+        if (startupError is not null) throw startupError;
+    }
+
+    private void StartOnCaptureThread()
+    {
         // 1) Pick the primary monitor and ask WGC for a capture item from its HMONITOR.
         var hmon = MonitorFromPoint(new POINT { X = 0, Y = 0 }, MONITOR_DEFAULTTOPRIMARY);
         if (hmon == IntPtr.Zero) throw new InvalidOperationException("No primary monitor.");
@@ -111,8 +147,12 @@ public sealed class WindowsGraphicsCapture : IFrameSource
         _device = dev; _context = ctx;
 
         // 3) Build the WGC frame pool tied to a WinRT device wrapper around _device.
+        // CreateFreeThreaded lets FrameArrived dispatch on an arbitrary thread
+        // without needing a CoreDispatcher. The plain Create() variant requires
+        // a dispatcher on the calling apartment, which our background MTA thread
+        // doesn't have — and that quietly stops FrameArrived from ever firing.
         var winrtDevice = Direct3D11Interop.CreateDirect3DDevice(_device);
-        _pool = Direct3D11CaptureFramePool.Create(
+        _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(
             winrtDevice,
             DirectXPixelFormat.B8G8R8A8UIntNormalized,
             numberOfBuffers: 2,
@@ -159,6 +199,7 @@ public sealed class WindowsGraphicsCapture : IFrameSource
 
     private void OnFrameArrived(Direct3D11CaptureFramePool sender, object _)
     {
+        System.Threading.Interlocked.Increment(ref _frameArrivedCount);
         if (!_running || _device is null || _context is null) return;
 
         using var frame = sender.TryGetNextFrame();
@@ -178,6 +219,8 @@ public sealed class WindowsGraphicsCapture : IFrameSource
             sender.Recreate(
                 Direct3D11Interop.CreateDirect3DDevice(_device),
                 DirectXPixelFormat.B8G8R8A8UIntNormalized,
+                // Pool stays free-threaded after Recreate, so frames keep flowing
+                // without needing a dispatcher on the calling thread.
                 numberOfBuffers: 2,
                 size: size);
             return; // skip this frame; the next FrameArrived will land in the new pool
@@ -194,7 +237,7 @@ public sealed class WindowsGraphicsCapture : IFrameSource
             {
                 var ptr = (byte*)map.DataPointer;
                 var span = new ReadOnlySpan<byte>(ptr, stride * Height);
-                var fr = new FrameRef(span, Width, Height, stride,
+                var fr = new FrameRef(span, map.DataPointer, Width, Height, stride,
                     _clock.ElapsedTicks * (10_000_000L / Stopwatch.Frequency));
                 FrameAvailable?.Invoke(fr);
             }

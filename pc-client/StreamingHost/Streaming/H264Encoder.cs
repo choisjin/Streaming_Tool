@@ -35,22 +35,62 @@ public sealed class H264Encoder : IDisposable
             libPath = null!; // fall back to PATH/auto-discovery
         FFmpegInit.Initialise(libPath: libPath);
 
-        _enc = new FFmpegVideoEncoder();
+        // Pass tune=zerolatency only — that's the single most impactful option
+        // and is supported by libx264. Other options (bf=0, g=...) are codec
+        // context flags that SIPSorceryMedia.FFmpeg's encoder dictionary path
+        // doesn't always plumb to libx264; passing them here can cause the
+        // encoder to silently emit empty buffers.
+        // tune=zerolatency already implies bf=0, refs=1, slice-threads off,
+        // and rc-lookahead=0. Passing those again as separate dict entries
+        // can make libx264 reject the encoder open silently, after which
+        // EncodeVideo just returns empty buffers and the wire stays dark.
+        // Keep the dictionary minimal.
+        var encOpts = new System.Collections.Generic.Dictionary<string, string>
+        {
+            ["tune"]   = "zerolatency",
+            ["preset"] = "ultrafast",
+        };
+        _enc = new FFmpegVideoEncoder(encOpts);
         // Force H.264 with low-latency tuning. SIPSorceryMedia.FFmpeg picks the codec
         // based on VideoCodecsEnum + the codec name registered in libavcodec.
         // It tries hardware encoders (h264_nvenc/h264_qsv/h264_amf) automatically
         // on recent versions; older versions need explicit codec selection — see README.
     }
 
-    /// <summary>Encode one BGRA frame. Returns the encoded NAL units (Annex-B) or null if dropped.</summary>
-    public byte[]? Encode(ReadOnlySpan<byte> bgra, int strideBytes, bool forceKeyFrame)
+    /// <summary>
+    /// Encode one BGRA frame from a native pointer. We copy into a tightly-packed
+    /// managed buffer and call EncodeVideo because the FFmpeg encoder's pointer
+    /// path assumes stride == width*4, which DXGI/WGC staging textures violate
+    /// at some resolutions due to row alignment.
+    /// </summary>
+    public byte[]? Encode(IntPtr bgraPtr, int strideBytes, bool forceKeyFrame)
     {
-        // FFmpegVideoEncoder.EncodeVideo expects raw frame buffer + format.
-        // Internally it converts BGRA -> YUV420P with swscale and feeds the encoder.
-        var frame = bgra.ToArray(); // FFmpeg API takes byte[]; copy is unavoidable here.
-        return _enc.EncodeVideo(_width, _height, frame, VideoPixelFormatsEnum.Bgra,
-            VideoCodecsEnum.H264);
+        if (forceKeyFrame) _enc.ForceKeyFrame();
+
+        var packedSize = _width * 4 * _height;
+        var packed = _packedBuf;
+        if (packed is null || packed.Length < packedSize) packed = _packedBuf = new byte[packedSize];
+
+        var rowBytes = _width * 4;
+        if (strideBytes == rowBytes)
+        {
+            // Already tightly packed — single memcpy.
+            System.Runtime.InteropServices.Marshal.Copy(bgraPtr, packed, 0, packedSize);
+        }
+        else
+        {
+            // Strided source: copy row by row to remove the padding the encoder doesn't expect.
+            for (var y = 0; y < _height; y++)
+            {
+                System.Runtime.InteropServices.Marshal.Copy(
+                    bgraPtr + y * strideBytes, packed, y * rowBytes, rowBytes);
+            }
+        }
+
+        return _enc.EncodeVideo(_width, _height, packed, VideoPixelFormatsEnum.Bgra, VideoCodecsEnum.H264);
     }
+
+    private byte[]? _packedBuf; // reused across frames to avoid GC churn
 
     /// <summary>RTP timestamp delta per frame at 90 kHz clock.</summary>
     public uint FrameDurationRtp => (uint)(90_000 / _fps);

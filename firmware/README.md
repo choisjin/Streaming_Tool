@@ -25,6 +25,24 @@ arduino-cli upload  --fqbn arduino:avr:leonardo --port COM5 firmware/pro_micro_h
 
 After upload, open Serial Monitor at 115200 — you should see `READY` once.
 
+## USB device name
+
+By default the Pro Micro reports as "Arduino Leonardo" (or the SparkFun
+product string), which is fine but recognizable. To make the device appear
+to the OS as a generic `HID Keyboard` composite, copy `boards.local.txt`
+from this folder into the Arduino AVR core directory and re-upload:
+
+```
+# Windows location (adjust the version)
+%LOCALAPPDATA%\Arduino15\packages\arduino\hardware\avr\<ver>\boards.local.txt
+```
+
+(See the comments in `boards.local.txt` for details and the optional VID/PID
+spoofing block — leave that off unless you know what you're doing.)
+
+After re-upload, Device Manager shows the board as `HID Keyboard` (HID-compliant
+composite device) instead of `Arduino Leonardo`.
+
 ## Smoke test
 
 Type these in the serial monitor (with newline):

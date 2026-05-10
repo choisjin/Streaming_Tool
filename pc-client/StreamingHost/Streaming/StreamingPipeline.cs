@@ -16,10 +16,15 @@ public sealed class StreamingPipeline : IDisposable
     private readonly H264Encoder _encoder;
     private readonly ConcurrentDictionary<string, WebRtcPeer> _peers = new();
     private long _frameCount;
+    private long _encodedCount;
+    private long _droppedCount;
     private long _lastKeyframeMs;
+    private long _lastDiagMs;
+    public event Action<string>? Diagnostic;
 
     /// <summary>Force a keyframe at most this often when no peer requested one.</summary>
     private const int KEYFRAME_INTERVAL_MS = 2000;
+    private const int DIAG_INTERVAL_MS = 1000;
 
     public StreamingPipeline(IFrameSource source, int fps = 60)
     {
@@ -42,15 +47,33 @@ public sealed class StreamingPipeline : IDisposable
         var forceKey = nowMs - _lastKeyframeMs > KEYFRAME_INTERVAL_MS || Interlocked.Read(ref _frameCount) == 0;
         if (forceKey) _lastKeyframeMs = nowMs;
 
-        var nalu = _encoder.Encode(frame.Bgra, frame.Stride, forceKey);
+        var nalu = _encoder.Encode(frame.BgraPtr, frame.Stride, forceKey);
         Interlocked.Increment(ref _frameCount);
-        if (nalu is null || nalu.Length == 0) return;
 
-        var dur = _encoder.FrameDurationRtp;
-        foreach (var peer in _peers.Values)
+        if (nalu is null || nalu.Length == 0)
         {
-            try { peer.SendH264Frame(nalu, dur); }
-            catch { /* one bad peer shouldn't kill the loop */ }
+            Interlocked.Increment(ref _droppedCount);
+        }
+        else
+        {
+            Interlocked.Increment(ref _encodedCount);
+            var dur = _encoder.FrameDurationRtp;
+            foreach (var peer in _peers.Values)
+            {
+                try { peer.SendH264Frame(nalu, dur); }
+                catch (Exception ex)
+                {
+                    Diagnostic?.Invoke($"send failed for {peer.ViewerId}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
+        if (nowMs - _lastDiagMs >= DIAG_INTERVAL_MS)
+        {
+            _lastDiagMs = nowMs;
+            var enc = Interlocked.Read(ref _encodedCount);
+            var drop = Interlocked.Read(ref _droppedCount);
+            Diagnostic?.Invoke($"pipeline: encoded={enc} dropped={drop} peers={_peers.Count} lastNalBytes={(nalu?.Length ?? 0)}");
         }
     }
 

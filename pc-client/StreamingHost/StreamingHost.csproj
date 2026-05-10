@@ -28,6 +28,8 @@
     <!-- Direct3D 11 / DXGI for the staging texture + interop with WGC -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+    <!-- Pro Micro serial -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
   <!-- Copy FFmpeg shared DLLs (avcodec/avformat/...) next to the EXE so we
