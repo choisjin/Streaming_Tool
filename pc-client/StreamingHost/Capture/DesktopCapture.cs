@@ -35,6 +35,13 @@ public sealed class DesktopCapture : IFrameSource
     public int Height { get; private set; }
     public event FrameAvailableHandler? FrameAvailable;
 
+    /// <summary>Adapter+output that DuplicateOutput finally accepted (for diagnostics).</summary>
+    public string PickedAdapterDescription { get; private set; } = "";
+    public string PickedOutputDescription { get; private set; } = "";
+    /// <summary>One line per (adapter, output) considered, with the resulting HRESULT.</summary>
+    public System.Collections.Generic.IReadOnlyList<string> EnumerationLog { get; private set; } =
+        System.Array.Empty<string>();
+
     public DesktopCapture(int monitorIndex = 0) => _monitorIndex = monitorIndex;
 
     public void Start()
@@ -56,50 +63,103 @@ public sealed class DesktopCapture : IFrameSource
     {
         using var factory = CreateDXGIFactory1<IDXGIFactory1>();
 
-        // Adapter 0 (primary GPU)
-        if (factory.EnumAdapters1(0, out IDXGIAdapter1? adapter).Failure || adapter is null)
-            throw new InvalidOperationException("No DXGI adapter (0) available.");
-        using var _adapter = adapter;
+        // Walk every (adapter, output) combination and pick the first pair where
+        // DuplicateOutput actually succeeds. Microsoft Basic Display Adapter,
+        // virtual display drivers, and orphaned RDP devices all surface as
+        // adapters/outputs that EnumOutputs returns happily but DuplicateOutput
+        // rejects with E_INVALIDARG (0x80070057) or DXGI_ERROR_UNSUPPORTED (0x887A0004).
+        var attempts = new System.Collections.Generic.List<string>();
 
-        // Create D3D11 device. The Vortice overload returns 3 out params (device, featureLevel, context).
-        var hr = D3D11CreateDevice(
-            _adapter,
-            DriverType.Unknown,
-            DeviceCreationFlags.BgraSupport,
-            new[] { FeatureLevel.Level_11_0 },
-            out ID3D11Device tempDevice,
-            out _,
-            out ID3D11DeviceContext tempContext);
-        hr.CheckError();
-        _device = tempDevice;
-        _context = tempContext;
-
-        // Locate the output (monitor) at the requested index.
-        if (_adapter.EnumOutputs((uint)_monitorIndex, out IDXGIOutput? output).Failure || output is null)
-            throw new InvalidOperationException($"Monitor {_monitorIndex} not found on adapter 0.");
-        using var _output = output;
-        using var output1 = _output.QueryInterface<IDXGIOutput1>();
-
-        var desc = _output.Description;
-        Width = desc.DesktopCoordinates.Right - desc.DesktopCoordinates.Left;
-        Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top;
-
-        _duplication = output1.DuplicateOutput(_device);
-
-        // CPU-readable staging texture matching capture format.
-        _staging = _device.CreateTexture2D(new Texture2DDescription
+        for (uint a = 0; ; a++)
         {
-            Width = (uint)Width,
-            Height = (uint)Height,
-            MipLevels = 1,
-            ArraySize = 1,
-            Format = Format.B8G8R8A8_UNorm,
-            SampleDescription = new SampleDescription(1, 0),
-            Usage = ResourceUsage.Staging,
-            BindFlags = BindFlags.None,
-            CPUAccessFlags = CpuAccessFlags.Read,
-            MiscFlags = ResourceOptionFlags.None,
-        });
+            if (factory.EnumAdapters1(a, out IDXGIAdapter1? adapter).Failure || adapter is null) break;
+            var aDesc = adapter.Description1.Description;
+            attempts.Add($"adapter[{a}] = \"{aDesc}\"");
+
+            var hadOutput = false;
+            for (uint o = 0; ; o++)
+            {
+                if (adapter.EnumOutputs(o, out IDXGIOutput? output).Failure || output is null) break;
+                hadOutput = true;
+                var oDesc = output.Description.DeviceName;
+
+                ID3D11Device? tempDevice = null;
+                ID3D11DeviceContext? tempContext = null;
+                try
+                {
+                    var hr = D3D11CreateDevice(
+                        adapter,
+                        DriverType.Unknown,
+                        DeviceCreationFlags.BgraSupport,
+                        new[] { FeatureLevel.Level_11_0 },
+                        out tempDevice,
+                        out _,
+                        out tempContext);
+                    if (hr.Failure)
+                    {
+                        attempts.Add($"  [{a}.{o}] {aDesc} / {oDesc}: D3D11CreateDevice failed 0x{hr.Code:X8}");
+                        continue;
+                    }
+
+                    using var output1 = output.QueryInterface<IDXGIOutput1>();
+                    var dup = output1.DuplicateOutput(tempDevice);
+
+                    // Success — keep this pair.
+                    var desc = output.Description;
+                    Width = desc.DesktopCoordinates.Right - desc.DesktopCoordinates.Left;
+                    Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top;
+                    _device = tempDevice; tempDevice = null;
+                    _context = tempContext; tempContext = null;
+                    _duplication = dup;
+                    PickedAdapterDescription = aDesc;
+                    PickedOutputDescription = oDesc;
+
+                    // CPU-readable staging texture matching capture format.
+                    _staging = _device.CreateTexture2D(new Texture2DDescription
+                    {
+                        Width = (uint)Width,
+                        Height = (uint)Height,
+                        MipLevels = 1,
+                        ArraySize = 1,
+                        Format = Format.B8G8R8A8_UNorm,
+                        SampleDescription = new SampleDescription(1, 0),
+                        Usage = ResourceUsage.Staging,
+                        BindFlags = BindFlags.None,
+                        CPUAccessFlags = CpuAccessFlags.Read,
+                        MiscFlags = ResourceOptionFlags.None,
+                    });
+
+                    output.Dispose();
+                    adapter.Dispose();
+                    return;
+                }
+                catch (SharpGen.Runtime.SharpGenException sx)
+                {
+                    attempts.Add($"  [{a}.{o}] {aDesc} / {oDesc}: DuplicateOutput 0x{sx.HResult:X8}");
+                }
+                catch (Exception ex)
+                {
+                    attempts.Add($"  [{a}.{o}] {aDesc} / {oDesc}: {ex.GetType().Name} {ex.Message}");
+                }
+                finally
+                {
+                    tempContext?.Dispose();
+                    tempDevice?.Dispose();
+                    output.Dispose();
+                }
+            }
+
+            if (!hadOutput) attempts.Add($"  [{a}.*] (no outputs)");
+            adapter.Dispose();
+        }
+
+        EnumerationLog = attempts;
+        var detail = attempts.Count == 0 ? "no adapters/outputs were enumerated" : string.Join("\n", attempts);
+        throw new InvalidOperationException(
+            "Desktop Duplication is unsupported on every adapter/output pair. " +
+            "This usually means the session has no real GPU output (RDP, " +
+            "Hyper-V Enhanced Session, headless server, Microsoft Basic Display Adapter), " +
+            "or the GPU driver is too old. Tried:\n" + detail);
     }
 
     private void Loop()

@@ -16,7 +16,7 @@ public partial class MainWindow : Window
 {
     private EmbeddedSignalingServer? _server;
     private StreamingPipeline? _pipeline;
-    private DesktopCapture? _capture;
+    private WindowsGraphicsCapture? _capture;
     private static readonly HttpClient s_http = new() { Timeout = TimeSpan.FromSeconds(4) };
 
     public MainWindow()
@@ -61,11 +61,13 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = false;
         try
         {
-            // 1) Start desktop capture (full primary monitor for now; per-window in Phase 3)
-            Log("[1/3] starting desktop capture…");
-            _capture = new DesktopCapture(monitorIndex: 0);
+            // 1) Start desktop capture via Windows.Graphics.Capture (works on hybrid GPUs/RDP)
+            Log("[1/3] starting capture (Windows.Graphics.Capture)…");
+            if (!WindowsGraphicsCapture.IsAvailable())
+                throw new InvalidOperationException("Windows.Graphics.Capture not available on this system (need Windows 10 1903+).");
+            _capture = new WindowsGraphicsCapture();
             _capture.Start();
-            Log($"capture started: {_capture.Width}x{_capture.Height}");
+            Log($"capture started: {_capture.Width}x{_capture.Height} on \"{_capture.PickedSourceDescription}\"");
 
             // 2) Build pipeline (encoder is created with capture's resolution)
             Log("[2/3] starting pipeline + encoder…");
@@ -99,14 +101,12 @@ public partial class MainWindow : Window
             StatusText.Text = $"Failed: {ex.Message}";
             StatusText.Foreground = System.Windows.Media.Brushes.OrangeRed;
             Log($"start failed: {ex.GetType().Name}: {ex.Message}");
-            // Walk inner exceptions — SIPSorcery / Kestrel often wrap the real cause
             var inner = ex.InnerException;
             while (inner is not null)
             {
                 Log($"  caused by {inner.GetType().Name}: {inner.Message}");
                 inner = inner.InnerException;
             }
-            // First few stack frames for the original throw
             foreach (var line in (ex.StackTrace ?? "").Split('\n').Take(4))
                 Log("  " + line.Trim());
             await TeardownAsync();

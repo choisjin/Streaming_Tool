@@ -2,10 +2,10 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <!-- Plain net8.0-windows is enough for Phase 1+2 (DXGI + WPF only). Per-window
-         capture in Phase 3 will require net8.0-windows10.0.19041.0 + Windows SDK
-         and Microsoft.Windows.CsWinRT. -->
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Need Windows SDK 22621 for Windows.Graphics.Capture (works on hybrid
+         GPU laptops, RDP, virtual displays — DXGI Desktop Duplication does not). -->
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -25,7 +25,7 @@
     <!-- WebRTC (pure .NET) -->
     <PackageReference Include="SIPSorcery" Version="8.0.23" />
     <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="8.0.7" />
-    <!-- Direct3D 11 / DXGI -->
+    <!-- Direct3D 11 / DXGI for the staging texture + interop with WGC -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
   </ItemGroup>
