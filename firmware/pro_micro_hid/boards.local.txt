@@ -9,17 +9,24 @@
 #   C:\Users\<you>\AppData\Local\Arduino15\packages\arduino\hardware\avr\<ver>\boards.local.txt
 # or wherever your Arduino15 packages dir lives.)
 #
-# Why: we want the OS to see this board as a generic "HID Keyboard" / "HID
-# Mouse" composite device — not the SparkFun Pro Micro's stock product string.
-# Anti-cheats and tooling that fingerprint by USB metadata are far less likely
-# to single us out for a plain HID name.
+# Why: we want the OS to see this board as a generic "HID Keyboard" composite
+# device — not "Arduino Micro" or "Arduino Leonardo". Anti-cheats and tooling
+# that fingerprint by USB metadata are far less likely to single us out for a
+# plain HID name.
 
-# We're treating the Pro Micro as an Arduino Leonardo (same MCU, atmega32u4).
+# Arduino Micro (atmega32u4) — this is the board we're using.
+micro.build.usb_product="HID Keyboard"
+micro.build.usb_manufacturer="HID"
+
+# Also cover Leonardo since it's the most common drop-in for atmega32u4 sketches.
 leonardo.build.usb_product="HID Keyboard"
 leonardo.build.usb_manufacturer="HID"
+
 # VID stays 0x2341 (Arduino) so existing drivers still bind. If you want to
 # look like a generic device, change to 0x046D (Logitech) or 0x045E (Microsoft)
 # — but read your country's regulations first; spoofing a registered VID is
 # not legal in some jurisdictions for a shipped product.
+# micro.build.vid=0x2341
+# micro.build.pid=0x8037
 # leonardo.build.vid=0x2341
 # leonardo.build.pid=0x8036

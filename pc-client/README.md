@@ -59,23 +59,28 @@ New-NetFirewallRule -DisplayName "StreamingHost 8080" -Direction Inbound -Protoc
 ```
 StreamingHost/
 ├── App.xaml(.cs)
-├── MainWindow.xaml(.cs)              # UI + orchestration (capture + pipeline + signaling)
+├── MainWindow.xaml(.cs)              # UI + orchestration (capture + pipeline + signaling + HID)
 ├── Signaling/
 │   └── EmbeddedSignalingServer.cs    # Kestrel /ws + /health, ViewerSession
 ├── Capture/
 │   ├── IFrameSource.cs
-│   ├── DesktopCapture.cs             # DXGI Desktop Duplication (full screen)
+│   ├── DesktopCapture.cs             # DXGI Desktop Duplication (kept as fallback; not the default)
+│   ├── WindowsGraphicsCapture.cs     # WGC primary monitor capture (default — works on hybrid GPU/RDP)
+│   ├── Direct3D11Interop.cs          # WinRT IDirect3DDevice <-> Vortice ID3D11Device bridge
 │   └── WindowEnumerator.cs           # Top-level window list (Phase 3 hooks WGC here)
-└── Streaming/
-    ├── H264Encoder.cs                # SIPSorceryMedia.FFmpeg — BGRA -> H.264 NALU
-    ├── StreamingPipeline.cs          # Capture -> encoder -> fan out to peers
-    └── WebRtcPeer.cs                 # SIPSorcery peer per viewer
+├── Streaming/
+│   ├── H264Encoder.cs                # SIPSorceryMedia.FFmpeg — BGRA -> H.264 NALU
+│   ├── StreamingPipeline.cs          # Capture -> encoder -> fan out to peers
+│   └── WebRtcPeer.cs                 # SIPSorcery peer per viewer
+└── Input/
+    ├── SerialBridge.cs               # COM port owner; queued writer + read loop
+    └── InputRouter.cs                # DataChannel JSON -> ASCII protocol; tracks virtual cursor
 ```
 
 ## Notes on GameGuard
 
 This client never injects input into the game process. Mobile -> DataChannel ->
-serial USB -> Pro Micro (HID) -> OS. The kernel sees actual USB HID reports.
+serial USB -> Arduino Micro / Pro Micro (HID) -> OS. The kernel sees actual USB HID reports.
 
 DO NOT add `SendInput`, `keybd_event`, `mouse_event`, `PostMessage(WM_KEYDOWN)`,
 `SetWindowsHookEx`, DLL injection, or any process attach to the game. Capture must
