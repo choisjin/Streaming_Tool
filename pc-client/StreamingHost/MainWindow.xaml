@@ -1,10 +1,11 @@
 <Window x:Class="StreamingHost.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Streaming Host" Height="520" Width="640"
+        Title="Streaming Host" Height="560" Width="660"
         Background="#0a0a0a" Foreground="White" FontFamily="Segoe UI">
     <Grid Margin="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,22 +15,45 @@
 
         <TextBlock Grid.Row="0" Text="Streaming Host" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
-            <TextBlock Text="Signaling URL:" Width="110" VerticalAlignment="Center"/>
-            <TextBox x:Name="SignalingUrlBox" Width="380" Text="ws://localhost:8080/ws"/>
-            <TextBlock Text="Room:" Width="60" Margin="14,0,0,0" VerticalAlignment="Center"/>
-            <TextBox x:Name="RoomCodeBox" Width="80"/>
+        <!-- Listen settings -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Listen port:" Width="90" VerticalAlignment="Center"/>
+            <TextBox x:Name="PortBox" Width="80" Text="8080"/>
+            <TextBlock Text="Room code:" Width="90" Margin="20,0,0,0" VerticalAlignment="Center"/>
+            <TextBox x:Name="RoomCodeBox" Width="100"/>
+            <Button x:Name="RegenButton" Content="↻" Width="28" Margin="4,0,0,0" Click="RegenButton_Click"
+                    ToolTip="Regenerate room code"/>
         </StackPanel>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
-            <Button x:Name="StartButton" Content="Start" Width="90" Height="30" Click="StartButton_Click"/>
-            <Button x:Name="StopButton"  Content="Stop"  Width="90" Height="30" Margin="8,0,0,0" Click="StopButton_Click" IsEnabled="False"/>
-            <TextBlock x:Name="StatusText" Text="Idle" Margin="20,6,0,0" Foreground="#aaa"/>
+        <!-- Connect URLs (read-only, populated when running) -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="LAN URL:" Width="90" VerticalAlignment="Center" Foreground="#aaa"/>
+            <TextBox x:Name="LanUrlBox" Width="380" IsReadOnly="True" Background="#222" Foreground="#ddd"
+                     BorderBrush="#333"/>
+            <Button Content="Copy" Width="60" Margin="6,0,0,0" Click="CopyLan_Click"/>
+        </StackPanel>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="WAN URL:" Width="90" VerticalAlignment="Center" Foreground="#aaa"/>
+            <TextBox x:Name="WanUrlBox" Width="380" IsReadOnly="True" Background="#222" Foreground="#ddd"
+                     BorderBrush="#333"
+                     ToolTip="Public IP via api.ipify.org. Mobile on cellular hits this URL after you forward the listen port on your router."/>
+            <Button Content="Copy" Width="60" Margin="6,0,0,0" Click="CopyWan_Click"/>
         </StackPanel>
 
-        <ListBox Grid.Row="3" x:Name="LogList" Background="#111" Foreground="#ddd" BorderThickness="0" FontFamily="Consolas" FontSize="12"/>
+        <!-- Status / actions stay just above the log via the Auto-rows above; controls bar goes here -->
+        <DockPanel Grid.Row="4" LastChildFill="True" Margin="0,0,0,0">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                <Button x:Name="StartButton" Content="Start" Width="90" Height="30" Click="StartButton_Click"/>
+                <Button x:Name="StopButton"  Content="Stop"  Width="90" Height="30" Margin="8,0,0,0"
+                        Click="StopButton_Click" IsEnabled="False"/>
+                <TextBlock x:Name="StatusText" Text="Idle" Margin="20,6,0,0" Foreground="#aaa"/>
+            </StackPanel>
 
-        <TextBlock Grid.Row="4" Foreground="#777" Margin="0,8,0,0"
-                   Text="Phase 1 — signaling round-trip only. Capture + encoder land in next pass."/>
+            <ListBox x:Name="LogList" Background="#111" Foreground="#ddd" BorderThickness="0"
+                     FontFamily="Consolas" FontSize="12"/>
+        </DockPanel>
+
+        <TextBlock Grid.Row="5" Foreground="#777" Margin="0,8,0,0" TextWrapping="Wrap"
+                   Text="Phase 1 — embedded signaling only. Forward the listen port on your router so the WAN URL is reachable from cellular. Capture + encoder + WebRTC peer wire up next."/>
     </Grid>
 </Window>

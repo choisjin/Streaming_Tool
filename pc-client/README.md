@@ -1,20 +1,24 @@
 # Streaming_tool — PC Client (Windows)
 
 C# / .NET 8 / WPF host that captures the desktop or a chosen window, encodes via GPU,
-and streams to mobile viewers over WebRTC. Input commands arrive on a DataChannel and
-are forwarded to a Pro Micro (USB HID) so GameGuard sees only hardware input.
+streams to mobile viewers over WebRTC, and forwards their input commands to a Pro Micro
+(USB HID) so GameGuard sees only hardware input.
+
+The same process also hosts the WebSocket signaling endpoint, so no external server is
+required — viewers connect directly to `ws://<PC IP>:<port>/ws`.
 
 ## Status
 
-Phase 1 (signaling round-trip): MainWindow + `SignalingClient` connect to the WSS server
-and register as `host`. Capture/encoder/WebRTC peer are scaffolded; the next pass wires
-DXGI capture -> H.264 encode -> SIPSorcery peer.
+Phase 1 complete: `EmbeddedSignalingServer` accepts viewer joins and relays answer/ice.
+MainWindow shows LAN + WAN connect URLs and the room code.
+
+Capture, encoder and WebRTC peer wiring land in Phase 2.
 
 ## Build
 
 Requires:
-- Windows 10 19041+ (for `Windows.Graphics.Capture`)
-- Visual Studio 2022 (17.8+) or `dotnet` SDK 8 with the Windows Desktop workload
+- Windows 10 19041+ (for `Windows.Graphics.Capture` — Phase 3 only)
+- Visual Studio 2022 (17.8+) **or** `dotnet` SDK 8 with the Windows Desktop workload
 
 ```pwsh
 dotnet build pc-client\StreamingHost.sln
@@ -26,23 +30,31 @@ dotnet build pc-client\StreamingHost.sln
 dotnet run --project pc-client\StreamingHost\StreamingHost.csproj
 ```
 
-Type the signaling WS URL (default `ws://localhost:8080/ws` for local dev) and room
-code, then **Start**. Mobile viewers join the same room over `wss://signal.{domain}/ws`.
+In the UI:
+1. Pick a listen port (default 8080) and room code.
+2. Click **Start**. The LAN URL is shown immediately; the WAN URL appears once the
+   public IP is resolved.
+3. To accept viewers from cellular, forward TCP `<port>` on your router to this PC.
+4. Allow the port through Windows Firewall (one-time):
+
+```pwsh
+New-NetFirewallRule -DisplayName "StreamingHost 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+```
 
 ## Layout
 
 ```
 StreamingHost/
 ├── App.xaml(.cs)
-├── MainWindow.xaml(.cs)         # UI + orchestration
+├── MainWindow.xaml(.cs)              # UI + orchestration
 ├── Signaling/
-│   └── SignalingClient.cs       # WSS host registration, SDP/ICE relay
+│   └── EmbeddedSignalingServer.cs    # Kestrel /ws + /health, ViewerSession
 ├── Capture/
 │   ├── IFrameSource.cs
-│   ├── DesktopCapture.cs        # DXGI Desktop Duplication (full screen)
-│   └── WindowEnumerator.cs      # EnumWindows + per-window selection (Phase 3 will add WGC)
+│   ├── DesktopCapture.cs             # DXGI Desktop Duplication (full screen)
+│   └── WindowEnumerator.cs           # Per-window selection (Phase 3 will add WGC)
 └── Streaming/
-    └── WebRtcPeer.cs            # SIPSorcery peer per viewer
+    └── WebRtcPeer.cs                 # SIPSorcery peer per viewer
 ```
 
 ## Notes on GameGuard
