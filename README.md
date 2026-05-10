@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Streaming_tool
 
-## Getting Started
+GameGuard 호환 PC 게임 원격 플레이 도구. 모바일에서 보고 조작, PC에서 캡처/스트리밍, 입력은 Pro Micro USB HID로 주입.
 
-First, run the development server:
+## Repo layout (monorepo)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+.
+├── web/                # Mobile web app — Next.js 16 + React 19, WebRTC viewer
+├── pc-client/          # Windows host — C# .NET 8 + WPF, DXGI/WGC capture, NVENC, SIPSorcery WebRTC
+├── signaling-server/   # Mac mini — Node.js + ws, SDP/ICE relay over WSS
+├── firmware/           # Pro Micro (ATmega32U4) — USB HID keyboard + mouse driven by PC client
+└── docs/               # architecture / signaling-protocol / input-protocol
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## High-level flow
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. PC 클라이언트가 Mac mini 시그널링 서버에 host로 등록 (room code 생성)
+2. 모바일 웹앱이 같은 room code로 join → WebRTC P2P offer/answer 교환
+3. PC -> 모바일: H.264 비디오 트랙
+4. 모바일 -> PC: DataChannel "input" (조이스틱/키패드 이벤트)
+5. PC가 입력을 시리얼로 Pro Micro에 전달 → Pro Micro가 진짜 USB HID로 게임 PC에 발사
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 왜 Pro Micro
 
-## Learn More
+`SendInput`, `PostMessage(WM_KEYDOWN)`, `keybd_event`, `mouse_event` 등 소프트웨어 입력 주입은 GameGuard가 탐지/밴. Pro Micro는 OS 입장에서 **진짜 USB HID 키보드/마우스**라 사실상 차단 불가능.
 
-To learn more about Next.js, take a look at the following resources:
+## Phase 진행 상황
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [x] **Phase 0**: 모바일 웹앱 UI (Toolbar, VirtualJoystick, VirtualMousePad, StreamViewer)
+- [ ] **Phase 1+2**: 시그널링 서버 + PC 클라이언트(전체 화면 캡처) + 모바일 영상 수신 *(진행 중)*
+- [ ] **Phase 3**: 프로세스/창 리스트 + 창 단위 캡처 (Windows.Graphics.Capture)
+- [ ] **Phase 4**: Pro Micro 펌웨어 + 시리얼 프로토콜 + DataChannel 입력
+- [ ] **Phase 5**: 페어링 코드, 자동 재연결, TURN, 트레이 아이콘, 배포
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 시작하기 (개발)
 
-## Deploy on Vercel
+### Mobile web
+```bash
+cd web
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Signaling server (local)
+```bash
+cd signaling-server
+npm install
+npm run dev      # ws://localhost:8080/ws
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### PC client
+Visual Studio 2022 또는 `dotnet build pc-client/StreamingHost.sln` (.NET 8 SDK + Windows Desktop workload 필요)
+
+### Firmware
+Arduino IDE 또는 `arduino-cli`로 `firmware/pro_micro_hid` 업로드 (board: Arduino Leonardo)
+
+## 자세한 설명
+
+- [Architecture](docs/architecture.md)
+- [Signaling protocol](docs/signaling-protocol.md)
+- [Input protocol](docs/input-protocol.md)
