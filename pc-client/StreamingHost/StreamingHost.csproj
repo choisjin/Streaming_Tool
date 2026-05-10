@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -17,12 +17,32 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Pull in the ASP.NET Core shared framework (for Kestrel / WebApplication)
+         alongside the Windows Desktop one. We use Microsoft.NET.Sdk (not Web SDK)
+         to avoid Web-SDK targets that don't compose with WPF. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+
     <!-- WebRTC (pure .NET) -->
     <PackageReference Include="SIPSorcery" Version="8.0.23" />
     <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="8.0.7" />
     <!-- Direct3D 11 / DXGI -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+  </ItemGroup>
+
+  <!-- Copy FFmpeg shared DLLs (avcodec/avformat/...) next to the EXE so we
+       don't depend on PATH. Override $(FFmpegBinDir) on the cmdline if your
+       install lives elsewhere:
+       dotnet build /p:FFmpegBinDir="C:\path\to\ffmpeg\bin"
+       Default looks for the winget Gyan.FFmpeg.Shared 7.x install. -->
+  <PropertyGroup>
+    <FFmpegBinDir Condition="'$(FFmpegBinDir)' == ''">$(LocalAppData)\Microsoft\WinGet\Packages\Gyan.FFmpeg.Shared_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-7.1.1-full_build-shared\bin</FFmpegBinDir>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(FFmpegBinDir)')">
+    <Content Include="$(FFmpegBinDir)\avcodec-*.dll;$(FFmpegBinDir)\avdevice-*.dll;$(FFmpegBinDir)\avformat-*.dll;$(FFmpegBinDir)\avutil-*.dll;$(FFmpegBinDir)\swresample-*.dll;$(FFmpegBinDir)\swscale-*.dll;$(FFmpegBinDir)\postproc-*.dll;$(FFmpegBinDir)\avfilter-*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>%(Filename)%(Extension)</Link>
+    </Content>
   </ItemGroup>
 
 </Project>

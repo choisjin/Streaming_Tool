@@ -62,15 +62,19 @@ public partial class MainWindow : Window
         try
         {
             // 1) Start desktop capture (full primary monitor for now; per-window in Phase 3)
+            Log("[1/3] starting desktop capture…");
             _capture = new DesktopCapture(monitorIndex: 0);
             _capture.Start();
             Log($"capture started: {_capture.Width}x{_capture.Height}");
 
             // 2) Build pipeline (encoder is created with capture's resolution)
+            Log("[2/3] starting pipeline + encoder…");
             _pipeline = new StreamingPipeline(_capture, fps: 60);
             _pipeline.Start();
+            Log("pipeline ready");
 
             // 3) Embedded signaling server
+            Log("[3/3] starting signaling server…");
             _server = new EmbeddedSignalingServer(room, port);
             _server.ViewerJoined += OnViewerJoined;
             _server.ViewerLeft += OnViewerLeft;
@@ -94,7 +98,17 @@ public partial class MainWindow : Window
         {
             StatusText.Text = $"Failed: {ex.Message}";
             StatusText.Foreground = System.Windows.Media.Brushes.OrangeRed;
-            Log($"start failed: {ex.Message}");
+            Log($"start failed: {ex.GetType().Name}: {ex.Message}");
+            // Walk inner exceptions — SIPSorcery / Kestrel often wrap the real cause
+            var inner = ex.InnerException;
+            while (inner is not null)
+            {
+                Log($"  caused by {inner.GetType().Name}: {inner.Message}");
+                inner = inner.InnerException;
+            }
+            // First few stack frames for the original throw
+            foreach (var line in (ex.StackTrace ?? "").Split('\n').Take(4))
+                Log("  " + line.Trim());
             await TeardownAsync();
             StartButton.IsEnabled = true;
         }

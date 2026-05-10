@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using SIPSorceryMedia.Abstractions;
 using SIPSorceryMedia.FFmpeg;
 
@@ -25,8 +26,14 @@ public sealed class H264Encoder : IDisposable
         _height = height;
         _fps = fps;
 
-        // Initialize FFmpeg shared libs (idempotent).
-        FFmpegInit.Initialise();
+        // Initialize FFmpeg shared libs (idempotent). Prefer the EXE folder so we
+        // pick up the pinned 7.x DLLs that the build copies in — the user's PATH
+        // may have a mismatched FFmpeg (e.g. winget's default 8.x) which breaks
+        // FFmpeg.AutoGen 7.0.0 with NotSupportedException at avdevice_register_all.
+        var libPath = AppContext.BaseDirectory;
+        if (!File.Exists(Path.Combine(libPath, "avcodec-61.dll")))
+            libPath = null!; // fall back to PATH/auto-discovery
+        FFmpegInit.Initialise(libPath: libPath);
 
         _enc = new FFmpegVideoEncoder();
         // Force H.264 with low-latency tuning. SIPSorceryMedia.FFmpeg picks the codec

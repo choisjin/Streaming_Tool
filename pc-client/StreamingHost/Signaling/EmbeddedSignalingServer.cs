@@ -43,10 +43,19 @@ public sealed class EmbeddedSignalingServer : IAsyncDisposable
 
     public async Task StartAsync()
     {
-        var builder = WebApplication.CreateBuilder();
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            // Avoid Kestrel reading appsettings.json from random working dirs.
+            ContentRootPath = AppContext.BaseDirectory,
+        });
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; });
-        builder.WebHost.UseUrls($"http://0.0.0.0:{Port}");
+        // Configure Kestrel via Services.Configure — the WebHost.* extension
+        // methods are only present when targeting the Web SDK.
+        builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(opts =>
+        {
+            opts.ListenAnyIP(Port);
+        });
 
         _app = builder.Build();
         _app.UseWebSockets(new WebSocketOptions
